@@ -1,30 +1,30 @@
 """
-Guardium CM Processor — Health Check Completo
+Guardium CM Processor — Complete Health Check
 ===================================================
 
-Este script automatiza o Health Check de ambientes Guardium, processando logs e gerando relatórios
-detalhados em Word e Excel.
+This script automates the Guardium Health Check, processing logs and generating detailed 
+reports in Word and Excel formats.
 
-Estrutura de Repositório Esperada:
+Expected Repository Structure:
 /
 ├── CM-Processor/
-│   └── cm_processor.py <--- (Este arquivo)
-└── CM/ <--- (Pasta de trabalho criada na raiz)
+│   └── cm_processor.py <--- (This file)
+└── CM/ <--- (Working folder created at the root)
     ├── Central Management/
     ├── STAP status/
     ...
 
-✔ Estrutura de pastas limpa (Sem "Processos Internos" ou "Tabelas Internas")
-✔ Limpeza automática de arquivos de execuções anteriores
+✔ Clean directory structure (No "Processos Internos" or "Tabelas Internas")
+✔ Automatic cleanup of files from previous runs
 ✔ STAP:
-    - Contagem Ativos vs Inativos
-    - Lista detalhada no Word dos INATIVOS (Host + Versão)
-✔ Agregação:
-    - Detecta falhas (Purge, Archive, Export)
-    - Captura a DATA da falha
-    - Relata no Word: Coletor - Falha - Data
+    - Active vs. Inactive count
+    - Detailed list of INACTIVE agents in Word (Host + Version)
+✔ Aggregation:
+    - Detects failures (Purge, Archive, Export)
+    - Captures the failure DATE
+    - Reports in Word: Collector - Failure - Date
 
-Dependências:
+Dependencies:
     pip install pandas openpyxl python-docx
 """
 
@@ -38,18 +38,26 @@ try:
     from docx.shared import Pt
     from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 except Exception:
+    # This check ensures the script runs even if docx is not installed, 
+    # but print a warning if report generation is attempted.
     Document = None
 
 # =========================================================
-# CONFIGURAÇÃO
+# CONFIGURATION
 # =========================================================
 
-# Apenas estas pastas serão criadas
+# Folder names used in the CM directory (MUST match README.md logic)
+FOLDER_CM = "Central Management"
+FOLDER_STAP = "STAP status"
+FOLDER_AGGREGATION = "Aggregation Processes"
+FOLDER_QUALITY = "Collection Quality"
+FOLDER_OUTPUT = "output"
+
 BASE_SUBFOLDERS = [
-    "Central Management",
-    "STAP status",
-    "Processos de agregação",
-    "Qualidade da coleta",
+    FOLDER_CM,
+    FOLDER_STAP,
+    FOLDER_AGGREGATION,
+    FOLDER_QUALITY,
 ]
 
 ACTIVE_KEYWORDS = ("active", "up", "running", "connected", "online")
@@ -57,7 +65,7 @@ INACTIVE_KEYWORDS = ("inactive", "down", "stopped", "disconnected", "offline", "
 SUCCESS_KEYWORDS = ("success", "done", "completed", "ok")
 
 # =========================================================
-# FUNÇÕES AUXILIARES
+# HELPER FUNCTIONS
 # =========================================================
 
 def read_table(path: Path) -> pd.DataFrame:
@@ -67,11 +75,11 @@ def read_table(path: Path) -> pd.DataFrame:
         if path.suffix.lower() == ".csv":
             return pd.read_csv(path)
     except Exception as e:
-        print(f"⚠ Erro ao ler {path.name}: {e}")
+        print(f"⚠ Error reading {path.name}: {e}")
     return pd.DataFrame()
 
 def find_column(df, keywords):
-    """Encontra uma coluna baseada em palavras-chave (case insensitive)"""
+    """Finds a column based on keywords (case insensitive)"""
     for c in df.columns:
         c_str = str(c).lower()
         for k in keywords:
@@ -80,7 +88,7 @@ def find_column(df, keywords):
     return None
 
 def clean_folder_contents(folder: Path, recursive=False):
-    """Limpa arquivos anteriores para evitar dados duplicados/antigos"""
+    """Cleans files from previous runs to ensure fresh data"""
     if not folder.is_dir():
         return
     
@@ -91,10 +99,11 @@ def clean_folder_contents(folder: Path, recursive=False):
             except Exception:
                 pass
         elif recursive and item.is_dir():
+            # Only clean children recursively, not the child folders themselves
             clean_folder_contents(item, recursive=False)
 
 # =========================================================
-# LÓGICA: IDENTIFICAÇÃO DE COLETORES
+# LOGIC: COLLECTOR IDENTIFICATION
 # =========================================================
 
 def extract_collectors(cm_folder: Path):
@@ -117,7 +126,7 @@ def extract_collectors(cm_folder: Path):
     return sorted(collectors)
 
 # =========================================================
-# LÓGICA: STAP STATUS (COM VERSÃO E FILTRO INATIVOS)
+# LOGIC: STAP STATUS (WITH VERSION & INACTIVE FILTER)
 # =========================================================
 
 def process_stap_status(folder: Path):
@@ -136,7 +145,7 @@ def process_stap_status(folder: Path):
         for _, row in df.iterrows():
             status = str(row.get(status_col, "")).strip()
             host = str(row.get(host_col, "")).strip() if host_col else "N/A"
-            version = str(row.get(ver_col, "")).strip() if ver_col else "Desc."
+            version = str(row.get(ver_col, "")).strip() if ver_col else "Undef."
             
             if status:
                 is_active = False
@@ -166,12 +175,12 @@ def process_stap_status(folder: Path):
     }
 
 # =========================================================
-# LÓGICA: AGREGAÇÃO (COM DATA)
+# LOGIC: AGGREGATION (WITH DATE)
 # =========================================================
 
 def analyze_aggregation_errors(base_folder: Path, collectors: list):
     """
-    Retorna uma lista de dicionários com os erros encontrados:
+    Returns a list of dictionaries with found errors:
     [{'collector': X, 'activity': Y, 'status': Z, 'date': D}, ...]
     """
     issues = []
@@ -189,7 +198,6 @@ def analyze_aggregation_errors(base_folder: Path, collectors: list):
 
             act_col = find_column(df, ["activity type", "activity", "process"])
             status_col = find_column(df, ["status", "execution status"])
-            # Coluna de data (Start Time, Run Time, Timestamp)
             date_col = find_column(df, ["start time", "run time", "timestamp", "date"])
 
             if not act_col or not status_col:
@@ -199,7 +207,7 @@ def analyze_aggregation_errors(base_folder: Path, collectors: list):
                 status_val = str(row.get(status_col, "")).strip()
                 activity_val = str(row.get(act_col, "")).strip()
                 
-                date_val = str(row.get(date_col, "")).strip() if date_col else "Data desc."
+                date_val = str(row.get(date_col, "")).strip() if date_col else "Undef. Date"
 
                 if not status_val or not activity_val:
                     continue
@@ -226,78 +234,79 @@ def analyze_aggregation_errors(base_folder: Path, collectors: list):
 # =========================================================
 
 def main(base_path="."):
-    # Ajusta o caminho base: se o script for executado de CM-Processor/, base_path deve ser '../' ou '.'
-    # O argumento 'base_path' (que por padrão é '.') agora representa a raiz onde a pasta CM deve ser criada.
     base = Path(base_path).resolve()
     cm = base / "CM"
     
-    print("--- INICIANDO GUARDIUM HEALTH CHECK ---")
+    print("--- STARTING GUARDIUM HEALTH CHECK ---")
 
-    # 1. LIMPEZA
-    print("🧹 Limpando arquivos de execuções anteriores...")
-    clean_folder_contents(cm / "Central Management")
-    clean_folder_contents(cm / "STAP status")
-    clean_folder_contents(cm / "Processos de agregação", recursive=True)
-    clean_folder_contents(cm / "Qualidade da coleta", recursive=True)
+    # 1. CLEANUP
+    print("🧹 Cleaning files from previous runs...")
+    cm.mkdir(exist_ok=True) # Ensure CM exists before cleaning its subdirs
+    clean_folder_contents(cm / FOLDER_CM)
+    clean_folder_contents(cm / FOLDER_STAP)
+    clean_folder_contents(cm / FOLDER_AGGREGATION, recursive=True)
+    clean_folder_contents(cm / FOLDER_QUALITY, recursive=True)
     
-    # 2. CRIAÇÃO DE ESTRUTURA
-    cm.mkdir(exist_ok=True)
+    # 2. CREATE STRUCTURE
     for sf in BASE_SUBFOLDERS:
         (cm / sf).mkdir(exist_ok=True)
 
-    print("✔ Estrutura de pastas verificada.")
-    input("\n➡ Coloque a planilha do Central Management na pasta 'Central Management' e pressione ENTER...")
+    print("✔ Directory structure verified.")
+    
+    # --- PROMPT 1 ---
+    input(f"\n➡ Place the Central Management spreadsheet in the '{FOLDER_CM}' folder and press ENTER...")
 
-    collectors = extract_collectors(cm / "Central Management")
+    collectors = extract_collectors(cm / FOLDER_CM)
     if not collectors:
-        print("❌ Nenhum Collector encontrado.")
+        print("❌ No Collectors found.")
         return
 
-    print(f"\n✔ {len(collectors)} Collectors identificados.")
+    print(f"\n✔ {len(collectors)} Collectors identified.")
 
-    # 3. CRIAÇÃO DE SUBPASTAS
+    # 3. CREATE COLLECTOR SUBFOLDERS
     for collector in collectors:
-        (cm / "Processos de agregação" / collector).mkdir(parents=True, exist_ok=True)
-        (cm / "Qualidade da coleta" / collector).mkdir(parents=True, exist_ok=True)
+        (cm / FOLDER_AGGREGATION / collector).mkdir(parents=True, exist_ok=True)
+        (cm / FOLDER_QUALITY / collector).mkdir(parents=True, exist_ok=True)
 
-    input("\n➡ Agora coloque os arquivos nas subpastas (STAP status, Agregação/Collector X) e pressione ENTER...")
+    # --- PROMPT 2 ---
+    input("\n➡ Now place the files into the subfolders (STAP status, Aggregation/Collector X) and press ENTER to start processing...")
 
-    # 4. PROCESSAMENTO E ANÁLISE
-    print("\n⚙ Processando dados...")
+    # 4. PROCESSING AND ANALYSIS
+    print("\n⚙ Processing data...")
     
     # A) STAP
-    stap_df, stap_sum = process_stap_status(cm / "STAP status")
+    stap_df, stap_sum = process_stap_status(cm / FOLDER_STAP)
     
-    # B) Agregação
-    agg_issues = analyze_aggregation_errors(cm / "Processos de agregação", collectors)
+    # B) Aggregation
+    agg_issues = analyze_aggregation_errors(cm / FOLDER_AGGREGATION, collectors)
 
-    # 5. GERAÇÃO DE RELATÓRIO
-    out = cm / "output"
+    # 5. REPORT GENERATION
+    out = cm / FOLDER_OUTPUT
     out.mkdir(exist_ok=True)
 
-    # Excel (Dados Brutos)
+    # Excel Output
     with pd.ExcelWriter(out / "CM_report.xlsx", engine="openpyxl") as writer:
         if not stap_df.empty:
-            stap_df.to_excel(writer, sheet_name="STAP_Todos", index=False)
+            stap_df.to_excel(writer, sheet_name="STAP_Inventory", index=False)
         if agg_issues:
-            pd.DataFrame(agg_issues).to_excel(writer, sheet_name="Erros_Agregacao", index=False)
+            pd.DataFrame(agg_issues).to_excel(writer, sheet_name="Aggregation_Errors", index=False)
 
-    # Word (Relatório Executivo)
+    # Word Output
     if Document:
         doc = Document()
-        doc.add_heading("Relatório de Health Check - Guardium", 0)
-        doc.add_paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        doc.add_heading("Guardium Health Check Report", 0)
+        doc.add_paragraph(f"Generated on: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
-        # --- SEÇÃO 1: STAP ---
-        doc.add_heading("1. Status dos Agentes (STAP)", level=1)
-        doc.add_paragraph(f"Total de agentes detectados: {stap_sum['total']}")
-        doc.add_paragraph(f"Agentes ATIVOS: {stap_sum['active']}")
+        # --- SECTION 1: STAP ---
+        doc.add_heading("1. Agent Status (STAP)", level=1)
+        doc.add_paragraph(f"Total agents detected: {stap_sum['total']}")
+        doc.add_paragraph(f"Active Agents: {stap_sum['active']}")
         p_inativos = doc.add_paragraph()
-        p_inativos.add_run(f"Agentes INATIVOS: {stap_sum['inactive']}").bold = True
+        p_inativos.add_run(f"Inactive Agents: {stap_sum['inactive']}").bold = True
 
-        # Tabela de Inativos (se houver)
+        # Inactive Table
         if stap_sum['inactive'] > 0:
-            doc.add_heading("Detalhamento dos Agentes Inativos:", level=3)
+            doc.add_heading("Detail of Inactive Agents:", level=3)
             
             inativos_df = stap_df[stap_df["is_active"] == False]
 
@@ -306,7 +315,7 @@ def main(base_path="."):
             hdr_cells = table.rows[0].cells
             hdr_cells[0].text = 'Host'
             hdr_cells[1].text = 'Status'
-            hdr_cells[2].text = 'Versão (Revision)'
+            hdr_cells[2].text = 'Version (Revision)'
 
             for _, row in inativos_df.iterrows():
                 row_cells = table.add_row().cells
@@ -314,20 +323,20 @@ def main(base_path="."):
                 row_cells[1].text = str(row['status'])
                 row_cells[2].text = str(row['version'])
         else:
-            doc.add_paragraph("✔ Todos os agentes reportados estão ativos.")
+            doc.add_paragraph("✔ All reported agents are active.")
 
-        # --- SEÇÃO 2: AGREGAÇÃO ---
-        doc.add_heading("2. Falhas em Processos de Agregação", level=1)
+        # --- SECTION 2: AGGREGATION ---
+        doc.add_heading("2. Aggregation Process Failures", level=1)
         
         if agg_issues:
-            doc.add_paragraph("Foram detectadas falhas nos seguintes processos (Purge, Export, Archive, etc.):")
+            doc.add_paragraph("The following process failures were detected (Purge, Export, Archive, etc.):")
             
             err_table = doc.add_table(rows=1, cols=3)
             err_table.style = 'Table Grid'
             eh_cells = err_table.rows[0].cells
-            eh_cells[0].text = 'Coletor / Appliance'
-            eh_cells[1].text = 'Falha (Processo/Status)'
-            eh_cells[2].text = 'Data Ocorrência'
+            eh_cells[0].text = 'Collector / Appliance'
+            eh_cells[1].text = 'Failure (Process/Status)'
+            eh_cells[2].text = 'Occurrence Date'
 
             for issue in agg_issues:
                 row_cells = err_table.add_row().cells
@@ -335,16 +344,17 @@ def main(base_path="."):
                 row_cells[1].text = f"{issue['activity']} ({issue['status']})"
                 row_cells[2].text = str(issue['date'])
         else:
-            doc.add_paragraph("Nenhum erro crítico encontrado nos logs de agregação fornecidos.")
+            doc.add_paragraph("No critical errors found in the provided aggregation logs.")
 
+        # Using the Portuguese filename as specified in the README.md output section
         word_path = out / "Relatorio_Executivo.docx"
         doc.save(word_path)
-        print(f"📄 Relatório Word gerado: {word_path}")
+        print(f"📄 Word Report generated: {word_path}")
 
-    print("\n✅ PROCESSAMENTO FINALIZADO")
-    print(f"Agentes Inativos: {stap_sum['inactive']}")
-    print(f"Erros de Agregação: {len(agg_issues)}")
+    print("\n✅ PROCESSING COMPLETE")
+    print(f"Inactive Agents: {stap_sum['inactive']}")
+    print(f"Aggregation Errors: {len(agg_issues)}")
 
 if __name__ == "__main__":
-    arg = sys.argv[1] if len(sys.argv) > 1 else "." 
+    arg = sys.argv[1] if len(sys.argv) > 1 else "."
     main(arg)
