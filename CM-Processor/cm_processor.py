@@ -46,7 +46,7 @@ except Exception:
 # CONFIGURATION
 # =========================================================
 
-# Folder names used in the CM directory (MUST match README.md logic)
+# Folder names used in the CM directory 
 FOLDER_CM = "Central Management"
 FOLDER_STAP = "STAP status"
 FOLDER_AGGREGATION = "Aggregation Processes"
